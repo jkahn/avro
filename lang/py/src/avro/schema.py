@@ -619,7 +619,7 @@ class RecordSchema(NamedSchema):
       NamedSchema.__init__(self, schema_type, name, namespace, names,
                            other_props)
 
-    if schema_type == 'record': 
+    if schema_type in ('record', 'error'):
       old_default = names.default_namespace
       names.default_namespace = Name(name, namespace,
                                      names.default_namespace).get_space()
