@@ -358,7 +358,8 @@ class TestProtocol(unittest.TestCase):
         if not example.valid: 
           num_correct += 1
         else:
-          self.fail("Coudl not parse valid protocol: %s" % (example.name,))
+          self.fail("Could not parse valid protocol: %s (%s)"
+                    % (example.name, e))
 
     fail_msg = "Parse behavior correct on %d out of %d protocols." % \
       (num_correct, len(EXAMPLES))
@@ -376,7 +377,11 @@ class TestProtocol(unittest.TestCase):
 
     num_correct = 0
     for example in VALID_EXAMPLES:
-      protocol_data = protocol.parse(example.protocol_string)
+      try:
+        protocol_data = protocol.parse(example.protocol_string)
+      except Exception as e:
+        self.fail("exception parsing protocol string (%s) (%s)"
+                  % (e, example.protocol_string))
       try:
         try:
           protocol.parse(str(protocol_data))
@@ -405,8 +410,17 @@ class TestProtocol(unittest.TestCase):
 
     num_correct = 0
     for example in VALID_EXAMPLES:
-      original_protocol = protocol.parse(example.protocol_string)
-      round_trip_protocol = protocol.parse(str(original_protocol))
+      try:
+        original_protocol = protocol.parse(example.protocol_string)
+      except Exception as e:
+        self.fail("could not parse original protocol: %s (%s)" %
+                  (e, protocol))
+
+      try:
+        round_trip_protocol = protocol.parse(str(original_protocol))
+      except Exception as e:
+        self.fail("could not parse restringified protocol: %s (%s)" %
+                  (e, str(original_protocol)))
 
       if original_protocol == round_trip_protocol:
         num_correct += 1
