@@ -160,6 +160,10 @@ class Schema(object):
   def validate(self, datum, allow_missing_fields=False):
     raise NotImplementedError("Must be implemented by subclass %s" % self.__class__)
 
+  def build_defaults(self, datum):
+    """most schemas do nothing with build_defaults"""
+    pass
+
 class Name(object):
   """Class to describe Avro name."""
   
@@ -527,6 +531,9 @@ class ArraySchema(Schema):
                                  allow_missing_fields=allow_missing_fields)
     return False not in map(item_okay, datum)
 
+  def build_defaults(self, datum):
+    return map(self.items.build_defaults, datum)
+
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
     return to_cmp == json.loads(str(that))
@@ -566,6 +573,9 @@ class MapSchema(Schema):
     def value_okay(v):
       return self.values.validate(v, allow_missing_fields=allow_missing_fields)
     return False not in map(value_okay, datum.values())
+
+  def build_defaults(self, datum):
+    return map(self.values.build_defaults, datum.values())
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -619,6 +629,18 @@ class UnionSchema(Schema):
     def member_valid(s):
       return s.validate(datum, allow_missing_fields=allow_missing_fields)
     return True in map(member_valid, self.schemas)
+
+  def build_defaults(self, datum):
+    best_s = None
+    for s in self.schemas:
+      if s.validate(datum, allow_missing_fields=True):
+        best_s = s
+        break
+    if best_s is None:
+      raise AvroException("schema %s doesn't match any schema in datum %s for default building"
+                          % (str(self), datum))
+
+    best_s.build_defaults(datum)
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -738,6 +760,25 @@ class RecordSchema(NamedSchema):
       return f.type.validate(datum.get(f.name),
                              allow_missing_fields=allow_missing_fields)
     return False not in map(field_okay, self.fields)
+
+  def build_defaults(self, datum):
+    for f in self.fields:
+      if f.name in datum:
+        # there's something here already. recurse, but do not try to fill in
+        f.type.build_defaults(datum[f.name])
+      elif f._has_default:
+        # no value but yes default. set it and DO NOT RECURSE
+        if isinstance(f.default, (dict, list, tuple)):
+          # get a deepcopy of the default. Make sure it's a copy by
+          # dumping to json and back
+          datum[f.name] = json.loads(json.dumps(f.default))
+        else:
+          datum[f.name] = f.default
+      else:
+        # no value but no default available. Do nothing -- don't even
+        # error out. This is the same pattern as the Builder pattern
+        # in the Java side.
+        pass
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
