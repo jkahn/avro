@@ -41,6 +41,10 @@ except ImportError:
 #
 # Constants
 #
+INT_MIN_VALUE = -(1 << 31)
+INT_MAX_VALUE = (1 << 31) - 1
+LONG_MIN_VALUE = -(1 << 63)
+LONG_MAX_VALUE = (1 << 63) - 1
 
 PRIMITIVE_TYPES = (
   'null',
@@ -152,6 +156,9 @@ class Schema(object):
     in the parameter names.
     """
     raise Exception("Must be implemented by subclasses.")
+
+  def validate(self, datum):
+    raise NotImplementedError("Must be implemented by subclass %s" % self.__class__)
 
 class Name(object):
   """Class to describe Avro name."""
@@ -387,6 +394,25 @@ class PrimitiveSchema(Schema):
   def __eq__(self, that):
     return self.props == that.props
 
+  def validate(self, datum):
+    schema_type = self.type
+    if schema_type == 'null':
+      return datum is None
+    elif schema_type == 'boolean':
+      return isinstance(datum, bool)
+    elif schema_type == 'string':
+      return isinstance(datum, basestring)
+    elif schema_type == 'bytes':
+      return isinstance(datum, str)
+    elif schema_type == 'int':
+      return ((isinstance(datum, int) or isinstance(datum, long)) 
+              and INT_MIN_VALUE <= datum <= INT_MAX_VALUE)
+    elif schema_type == 'long':
+      return ((isinstance(datum, int) or isinstance(datum, long)) 
+              and LONG_MIN_VALUE <= datum <= LONG_MAX_VALUE)
+    elif schema_type in ['float', 'double']:
+      return (isinstance(datum, int) or isinstance(datum, long)
+              or isinstance(datum, float))
 #
 # Complex Types (non-recursive)
 #
@@ -415,6 +441,9 @@ class FixedSchema(NamedSchema):
     else:
       names.names[self.fullname] = self
       return self.props
+
+  def validate(self, datum):
+    return isinstance(datum, str) and len(datum) == self.size
 
   def __eq__(self, that):
     return self.props == that.props
@@ -452,6 +481,9 @@ class EnumSchema(NamedSchema):
       names.names[self.fullname] = self
       return self.props
 
+  def validate(self, datum):
+    return datum in self.symbols
+
   def __eq__(self, that):
     return self.props == that.props
 
@@ -487,6 +519,11 @@ class ArraySchema(Schema):
     to_dump['items'] = item_schema.to_json(names)
     return to_dump
 
+  def validate(self, datum):
+    if not isinstance(datum, list):
+      return False
+    return False not in [self.items.validate(d) for d in datum]
+
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
     return to_cmp == json.loads(str(that))
@@ -517,6 +554,13 @@ class MapSchema(Schema):
     to_dump = self.props.copy()
     to_dump['values'] = self.get_prop('values').to_json(names)
     return to_dump
+
+  def validate(self, datum):
+    if not isinstance(datum, dict):
+      return False
+    if False in [isinstance(k, basestring) for k in datum.keys()]:
+      return False
+    return False not in [self.values.validate(d) for d in datum.values()]
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -565,6 +609,9 @@ class UnionSchema(Schema):
     for schema in self.schemas:
       to_dump.append(schema.to_json(names))
     return to_dump
+
+  def validate(self, datum):
+    return True in [s.validate(datum) for s in self.schemas]
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -674,6 +721,12 @@ class RecordSchema(NamedSchema):
     to_dump = self.props.copy()
     to_dump['fields'] = [ f.to_json(names) for f in self.fields ]
     return to_dump
+
+  def validate(self, datum):
+    if not isinstance(datum, dict):
+      return False
+    return False not in [f.type.validate(datum.get(f.name))
+                         for f in self.fields]
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))

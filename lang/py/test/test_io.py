@@ -179,7 +179,7 @@ class TestIO(unittest.TestCase):
     for example_schema, datum in SCHEMAS_TO_VALIDATE:
       print 'Schema: %s' % example_schema
       print 'Datum: %s' % datum
-      validated = io.validate(schema.parse(example_schema), datum)
+      validated = schema.parse(example_schema).validate(datum)
       print 'Valid: %s' % validated
       if validated: passed += 1
     self.assertEquals(passed, len(SCHEMAS_TO_VALIDATE))

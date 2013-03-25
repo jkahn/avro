@@ -18,7 +18,6 @@ Input/Output utilities, including:
 
  * i/o-specific constants
  * i/o-specific exceptions
- * schema validation
  * leaf value encoding and decoding
  * datum reader/writer stuff (?)
 
@@ -94,48 +93,12 @@ class SchemaResolutionException(schema.AvroException):
     if readers_schema: fail_msg += "\nReader's Schema: %s" % pretty_readers
     schema.AvroException.__init__(self, fail_msg)
 
-#
-# Validate
-#
 
+#
+# Validate - here for backwards-compatibility
+#
 def validate(expected_schema, datum):
-  """Determine if a python datum is an instance of a schema."""
-  schema_type = expected_schema.type
-  if schema_type == 'null':
-    return datum is None
-  elif schema_type == 'boolean':
-    return isinstance(datum, bool)
-  elif schema_type == 'string':
-    return isinstance(datum, basestring)
-  elif schema_type == 'bytes':
-    return isinstance(datum, str)
-  elif schema_type == 'int':
-    return ((isinstance(datum, int) or isinstance(datum, long)) 
-            and INT_MIN_VALUE <= datum <= INT_MAX_VALUE)
-  elif schema_type == 'long':
-    return ((isinstance(datum, int) or isinstance(datum, long)) 
-            and LONG_MIN_VALUE <= datum <= LONG_MAX_VALUE)
-  elif schema_type in ['float', 'double']:
-    return (isinstance(datum, int) or isinstance(datum, long)
-            or isinstance(datum, float))
-  elif schema_type == 'fixed':
-    return isinstance(datum, str) and len(datum) == expected_schema.size
-  elif schema_type == 'enum':
-    return datum in expected_schema.symbols
-  elif schema_type == 'array':
-    return (isinstance(datum, list) and
-      False not in [validate(expected_schema.items, d) for d in datum])
-  elif schema_type == 'map':
-    return (isinstance(datum, dict) and
-      False not in [isinstance(k, basestring) for k in datum.keys()] and
-      False not in
-        [validate(expected_schema.values, v) for v in datum.values()])
-  elif schema_type in ['union', 'error_union']:
-    return True in [validate(s, datum) for s in expected_schema.schemas]
-  elif schema_type in ['record', 'error', 'request']:
-    return (isinstance(datum, dict) and
-      False not in
-        [validate(f.type, datum.get(f.name)) for f in expected_schema.fields])
+  return expected_schema.validate(datum)
 
 #
 # Decoder/Encoder
@@ -765,7 +728,7 @@ class DatumWriter(object):
 
   def write(self, datum, encoder):
     # validate datum
-    if not validate(self.writers_schema, datum):
+    if not self.writers_schema.validate(datum):
       raise AvroTypeException(self.writers_schema, datum)
     
     self.write_data(self.writers_schema, datum, encoder)
@@ -871,7 +834,7 @@ class DatumWriter(object):
     # resolve union
     index_of_schema = -1
     for i, candidate_schema in enumerate(writers_schema.schemas):
-      if validate(candidate_schema, datum):
+      if candidate_schema.validate(datum):
         index_of_schema = i
     if index_of_schema < 0: raise AvroTypeException(writers_schema, datum)
 
