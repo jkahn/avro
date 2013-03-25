@@ -157,7 +157,7 @@ class Schema(object):
     """
     raise Exception("Must be implemented by subclasses.")
 
-  def validate(self, datum):
+  def validate(self, datum, allow_missing_fields=False):
     raise NotImplementedError("Must be implemented by subclass %s" % self.__class__)
 
 class Name(object):
@@ -394,7 +394,7 @@ class PrimitiveSchema(Schema):
   def __eq__(self, that):
     return self.props == that.props
 
-  def validate(self, datum):
+  def validate(self, datum, allow_missing_fields=False):
     schema_type = self.type
     if schema_type == 'null':
       return datum is None
@@ -442,7 +442,7 @@ class FixedSchema(NamedSchema):
       names.names[self.fullname] = self
       return self.props
 
-  def validate(self, datum):
+  def validate(self, datum, allow_missing_fields=False):
     return isinstance(datum, str) and len(datum) == self.size
 
   def __eq__(self, that):
@@ -481,7 +481,7 @@ class EnumSchema(NamedSchema):
       names.names[self.fullname] = self
       return self.props
 
-  def validate(self, datum):
+  def validate(self, datum, allow_missing_fields=False):
     return datum in self.symbols
 
   def __eq__(self, that):
@@ -519,10 +519,13 @@ class ArraySchema(Schema):
     to_dump['items'] = item_schema.to_json(names)
     return to_dump
 
-  def validate(self, datum):
+  def validate(self, datum, allow_missing_fields=False):
     if not isinstance(datum, list):
       return False
-    return False not in [self.items.validate(d) for d in datum]
+    def item_okay(i):
+      return self.items.validate(i,
+                                 allow_missing_fields=allow_missing_fields)
+    return False not in map(item_okay, datum)
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -555,12 +558,14 @@ class MapSchema(Schema):
     to_dump['values'] = self.get_prop('values').to_json(names)
     return to_dump
 
-  def validate(self, datum):
+  def validate(self, datum, allow_missing_fields=False):
     if not isinstance(datum, dict):
       return False
     if False in [isinstance(k, basestring) for k in datum.keys()]:
       return False
-    return False not in [self.values.validate(d) for d in datum.values()]
+    def value_okay(v):
+      return self.values.validate(v, allow_missing_fields=allow_missing_fields)
+    return False not in map(value_okay, datum.values())
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -610,8 +615,10 @@ class UnionSchema(Schema):
       to_dump.append(schema.to_json(names))
     return to_dump
 
-  def validate(self, datum):
-    return True in [s.validate(datum) for s in self.schemas]
+  def validate(self, datum, allow_missing_fields=False):
+    def member_valid(s):
+      return s.validate(datum, allow_missing_fields=allow_missing_fields)
+    return True in map(member_valid, self.schemas)
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -722,11 +729,15 @@ class RecordSchema(NamedSchema):
     to_dump['fields'] = [ f.to_json(names) for f in self.fields ]
     return to_dump
 
-  def validate(self, datum):
+  def validate(self, datum, allow_missing_fields=False):
     if not isinstance(datum, dict):
       return False
-    return False not in [f.type.validate(datum.get(f.name))
-                         for f in self.fields]
+    def field_okay(f):
+      if f.name not in datum:
+        return allow_missing_fields
+      return f.type.validate(datum.get(f.name),
+                             allow_missing_fields=allow_missing_fields)
+    return False not in map(field_okay, self.fields)
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
