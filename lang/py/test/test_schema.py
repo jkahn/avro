@@ -289,6 +289,22 @@ OTHER_PROP_EXAMPLES = [
     """,True),
 ]
 
+DEFAULT_EXAMPLE = \
+  ExampleSchema("""\
+   {"type": "record",
+    "name": "TestDefaultBuilder",
+    "fields": [ {"name": "f1", "type": "string", "default": ""},
+                {"name": "f2", "type": "long", "default": 0} ]
+   }
+""", True)
+
+DEFAULT_BUILD_SKELETONS = [
+  ({"f1": "foo"}, {"f1": "foo", "f2": 0}),
+  ({"f2": -98}, {"f1": "", "f2": -98}),
+  ({}, {"f1": "", "f2": 0})
+]
+
+
 EXAMPLES = PRIMITIVE_EXAMPLES
 EXAMPLES += FIXED_EXAMPLES
 EXAMPLES += ENUM_EXAMPLES
@@ -297,6 +313,7 @@ EXAMPLES += MAP_EXAMPLES
 EXAMPLES += UNION_EXAMPLES
 EXAMPLES += RECORD_EXAMPLES
 EXAMPLES += DOC_EXAMPLES
+EXAMPLES += [DEFAULT_EXAMPLE]
 
 VALID_EXAMPLES = [e for e in EXAMPLES if e.valid]
 
@@ -306,6 +323,12 @@ VALID_EXAMPLES = [e for e in EXAMPLES if e.valid]
 # TODO(hammer): show strack trace to user
 # TODO(hammer): use logging module?
 class TestSchema(unittest.TestCase):
+
+  def test_default_building(self):
+    sch = schema.parse(DEFAULT_EXAMPLE.schema_string)
+    for in_record, out_record in DEFAULT_BUILD_SKELETONS:
+      sch.build_defaults(in_record)
+      self.assertEqual(in_record, out_record)
 
   def test_correct_recursive_extraction(self):
     s = schema.parse('{"type": "record", "name": "X", "fields": [{"name": "y", "type": {"type": "record", "name": "Y", "fields": [{"name": "Z", "type": "X"}]}}]}')
