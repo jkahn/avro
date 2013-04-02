@@ -145,7 +145,7 @@ class DataFileWriter(object):
     header = {'magic': MAGIC,
               'meta': self.meta,
               'sync': self.sync_marker}
-    self.datum_writer.write_data(META_SCHEMA, header, self.encoder)
+    META_SCHEMA.write_data(header, self.encoder)
     self._header_written = True
 
   # TODO(hammer): make a schema for blocks and use datum_writer
