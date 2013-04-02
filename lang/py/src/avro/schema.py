@@ -160,6 +160,23 @@ class Schema(object):
   def validate(self, datum):
     raise NotImplementedError("Must be implemented by subclass %s" % self.__class__)
 
+  def select_reader_schema(self, schema):
+    if isinstance(schema, UnionSchema):
+      for s in schema.schemas:
+        if self.schema_compatible(s):
+          return s
+      return None
+    elif self.schema_compatible(schema):
+
+      return schema
+
+  def schema_compatible(self, schema):
+    """when called on a writers schema, returns schema that should be
+    used to read the data for reader schema"""
+    raise NotImplementedError("must be implemented by subclass %s"
+                              % self.__class__)
+
+
 class Name(object):
   """Class to describe Avro name."""
   
@@ -413,6 +430,25 @@ class PrimitiveSchema(Schema):
     elif schema_type in ['float', 'double']:
       return (isinstance(datum, int) or isinstance(datum, long)
               or isinstance(datum, float))
+    else:
+      raise AvroException("unknown primitive schema_type %s" % schema_type)
+
+  def schema_compatible(self, schema):
+    if schema.type in PRIMITIVE_TYPES \
+          and schema.type == self.type:
+      return True
+    elif self.type == 'int' \
+          and schema.type in ('long', 'float', 'double'):
+      # promote int-> long, float, double
+      return True
+    elif self.type == 'long' \
+          and schema.type in ['float', 'double']:
+      # promote long -> float, double
+      return True
+    elif self.type == 'float' and schema.type == 'double':
+      # promote float -> double
+      return True
+    return False
 #
 # Complex Types (non-recursive)
 #
@@ -441,6 +477,11 @@ class FixedSchema(NamedSchema):
     else:
       names.names[self.fullname] = self
       return self.props
+
+  def schema_compatible(self, schema):
+    return schema.type == 'fixed' \
+        and self.fullname == schema.fullname \
+        and self.size == schema.size
 
   def validate(self, datum):
     return isinstance(datum, str) and len(datum) == self.size
@@ -484,6 +525,10 @@ class EnumSchema(NamedSchema):
   def validate(self, datum):
     return datum in self.symbols
 
+  def schema_compatible(self, schema):
+    return schema.type == 'enum' \
+        and schema.fullname == self.fullname
+
   def __eq__(self, that):
     return self.props == that.props
 
@@ -524,6 +569,10 @@ class ArraySchema(Schema):
       return False
     return False not in [self.items.validate(d) for d in datum]
 
+  def schema_compatible(self, schema):
+    return schema.type == 'array' \
+        and self.items.type == schema.items.type
+
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
     return to_cmp == json.loads(str(that))
@@ -561,6 +610,10 @@ class MapSchema(Schema):
     if False in [isinstance(k, basestring) for k in datum.keys()]:
       return False
     return False not in [self.values.validate(d) for d in datum.values()]
+
+  def schema_compatible(self, schema):
+    return schema.type == 'map' \
+        and self.values.type == schema.values.type
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -612,6 +665,13 @@ class UnionSchema(Schema):
 
   def validate(self, datum):
     return True in [s.validate(datum) for s in self.schemas]
+
+  def select_reader_schema(self, schema):
+    for s in self.schemas:
+      if s.select_reader_schema(schema) is None:
+        # items in union member s can't be represented over there
+        return None
+    return schema
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -727,6 +787,9 @@ class RecordSchema(NamedSchema):
       return False
     return False not in [f.type.validate(datum.get(f.name))
                          for f in self.fields]
+
+  def schema_compatible(self, schema):
+    return schema.type == 'record' and self.fullname == schema.fullname
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
