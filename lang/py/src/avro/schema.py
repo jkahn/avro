@@ -108,6 +108,15 @@ class AvroException(Exception):
 class SchemaParseException(AvroException):
   pass
 
+class AvroTypeException(AvroException):
+  """Raised when datum is not an example of schema."""
+  def __init__(self, expected_schema, datum):
+    pretty_expected = json.dumps(json.loads(str(expected_schema)), indent=2)
+    fail_msg = "The datum %s is not an example of the schema %s"\
+               % (datum, pretty_expected)
+    AvroException.__init__(self, fail_msg)
+
+
 #
 # Base Classes
 #
@@ -159,6 +168,10 @@ class Schema(object):
 
   def validate(self, datum):
     raise NotImplementedError("Must be implemented by subclass %s" % self.__class__)
+
+  def write_data(datum, encoder):
+    """uses inheritance for function dispatch"""
+    raise Exception("Must be implemented by subclasses")
 
 class Name(object):
   """Class to describe Avro name."""
@@ -391,6 +404,28 @@ class PrimitiveSchema(Schema):
     else:
       return self.props
 
+  def write_data(self, datum, encoder):
+    # function dispatch to write datum
+    if self.type == 'null':
+      encoder.write_null(datum)
+    elif self.type == 'boolean':
+      encoder.write_boolean(datum)
+    elif self.type == 'string':
+      encoder.write_utf8(datum)
+    elif self.type == 'int':
+      encoder.write_int(datum)
+    elif self.type == 'long':
+      encoder.write_long(datum)
+    elif self.type == 'float':
+      encoder.write_float(datum)
+    elif self.type == 'double':
+      encoder.write_double(datum)
+    elif self.type == 'bytes':
+      encoder.write_bytes(datum)
+    else:
+      fail_msg = 'Unknown type: %s' % self.type
+      raise AvroException(fail_msg)
+
   def __eq__(self, that):
     return self.props == that.props
 
@@ -445,6 +480,13 @@ class FixedSchema(NamedSchema):
   def validate(self, datum):
     return isinstance(datum, str) and len(datum) == self.size
 
+  def write_data(self, datum, encoder):
+    """
+    Fixed instances are encoded using the number of bytes declared
+    in the schema.
+    """
+    encoder.write(datum)
+
   def __eq__(self, that):
     return self.props == that.props
 
@@ -484,6 +526,14 @@ class EnumSchema(NamedSchema):
   def validate(self, datum):
     return datum in self.symbols
 
+  def write_data(self, datum, encoder):
+    """
+    An enum is encoded by a int, representing the zero-based position
+    of the symbol in the schema.
+    """
+    index_of_datum = self.symbols.index(datum)
+    encoder.write_int(index_of_datum)
+
   def __eq__(self, that):
     return self.props == that.props
 
@@ -519,10 +569,32 @@ class ArraySchema(Schema):
     to_dump['items'] = item_schema.to_json(names)
     return to_dump
 
+
   def validate(self, datum):
     if not isinstance(datum, list):
       return False
     return False not in [self.items.validate(d) for d in datum]
+
+  def write_data(self, datum, encoder):
+    """
+    Arrays are encoded as a series of blocks.
+
+    Each block consists of a long count value,
+    followed by that many array items.
+    A block with count zero indicates the end of the array.
+    Each item is encoded per the array's item schema.
+
+    If a block's count is negative,
+    then the count is followed immediately by a long block size,
+    indicating the number of bytes in the block.
+    The actual count in this case
+    is the absolute value of the count written.
+    """
+    if len(datum) > 0:
+      encoder.write_long(len(datum))
+      for item in datum:
+        self.items.write_data(item, encoder)
+    encoder.write_long(0)
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -561,6 +633,28 @@ class MapSchema(Schema):
     if False in [isinstance(k, basestring) for k in datum.keys()]:
       return False
     return False not in [self.values.validate(d) for d in datum.values()]
+
+  def write_data(self, datum, encoder):
+    """
+    Maps are encoded as a series of blocks.
+
+    Each block consists of a long count value,
+    followed by that many key/value pairs.
+    A block with count zero indicates the end of the map.
+    Each item is encoded per the map's value schema.
+
+    If a block's count is negative,
+    then the count is followed immediately by a long block size,
+    indicating the number of bytes in the block.
+    The actual count in this case
+    is the absolute value of the count written.
+    """
+    if len(datum) > 0:
+      encoder.write_long(len(datum))
+      for key, val in datum.items():
+        encoder.write_utf8(key)
+        self.values.write_data(val, encoder)
+    encoder.write_long(0)
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -612,6 +706,23 @@ class UnionSchema(Schema):
 
   def validate(self, datum):
     return True in [s.validate(datum) for s in self.schemas]
+
+  def write_data(self, datum, encoder):
+    """
+    A union is encoded by first writing a long value indicating
+    the zero-based position within the union of the schema of its value.
+    The value is then encoded per the indicated schema within the union.
+    """
+    # resolve union
+    index_of_schema = -1
+    for i, candidate_schema in enumerate(self.schemas):
+      if candidate_schema.validate(datum):
+        index_of_schema = i
+    if index_of_schema < 0: raise AvroTypeException(self, datum)
+
+    # write data
+    encoder.write_long(index_of_schema)
+    self.schemas[index_of_schema].write_data(datum, encoder)
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
@@ -727,6 +838,16 @@ class RecordSchema(NamedSchema):
       return False
     return False not in [f.type.validate(datum.get(f.name))
                          for f in self.fields]
+
+  def write_data(self, datum, encoder):
+    """
+    A record is encoded by encoding the values of its fields
+    in the order that they are declared. In other words, a record
+    is encoded as just the concatenation of the encodings of its fields.
+    Field values are encoded per their schema.
+    """
+    for field in self.fields:
+      field.type.write_data(datum.get(field.name), encoder)
 
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
