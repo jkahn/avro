@@ -77,13 +77,7 @@ STRUCT_CRC32 = struct_class('>I')   # big-endian unsigned int
 # Exceptions
 #
 
-class AvroTypeException(schema.AvroException):
-  """Raised when datum is not an example of schema."""
-  def __init__(self, expected_schema, datum):
-    pretty_expected = json.dumps(json.loads(str(expected_schema)), indent=2)
-    fail_msg = "The datum %s is not an example of the schema %s"\
-               % (datum, pretty_expected)
-    schema.AvroException.__init__(self, fail_msg)
+from schema import AvroTypeException
 
 class SchemaResolutionException(schema.AvroException):
   def __init__(self, fail_msg, writers_schema=None, readers_schema=None):
@@ -730,124 +724,8 @@ class DatumWriter(object):
     # validate datum
     if not self.writers_schema.validate(datum):
       raise AvroTypeException(self.writers_schema, datum)
-    
-    self.write_data(self.writers_schema, datum, encoder)
+    self.writers_schema.write_data(datum, encoder)
 
   def write_data(self, writers_schema, datum, encoder):
-    # function dispatch to write datum
-    if writers_schema.type == 'null':
-      encoder.write_null(datum)
-    elif writers_schema.type == 'boolean':
-      encoder.write_boolean(datum)
-    elif writers_schema.type == 'string':
-      encoder.write_utf8(datum)
-    elif writers_schema.type == 'int':
-      encoder.write_int(datum)
-    elif writers_schema.type == 'long':
-      encoder.write_long(datum)
-    elif writers_schema.type == 'float':
-      encoder.write_float(datum)
-    elif writers_schema.type == 'double':
-      encoder.write_double(datum)
-    elif writers_schema.type == 'bytes':
-      encoder.write_bytes(datum)
-    elif writers_schema.type == 'fixed':
-      self.write_fixed(writers_schema, datum, encoder)
-    elif writers_schema.type == 'enum':
-      self.write_enum(writers_schema, datum, encoder)
-    elif writers_schema.type == 'array':
-      self.write_array(writers_schema, datum, encoder)
-    elif writers_schema.type == 'map':
-      self.write_map(writers_schema, datum, encoder)
-    elif writers_schema.type in ['union', 'error_union']:
-      self.write_union(writers_schema, datum, encoder)
-    elif writers_schema.type in ['record', 'error', 'request']:
-      self.write_record(writers_schema, datum, encoder)
-    else:
-      fail_msg = 'Unknown type: %s' % writers_schema.type
-      raise schema.AvroException(fail_msg)
-
-  def write_fixed(self, writers_schema, datum, encoder):
-    """
-    Fixed instances are encoded using the number of bytes declared
-    in the schema.
-    """
-    encoder.write(datum)
-
-  def write_enum(self, writers_schema, datum, encoder):
-    """
-    An enum is encoded by a int, representing the zero-based position
-    of the symbol in the schema.
-    """
-    index_of_datum = writers_schema.symbols.index(datum)
-    encoder.write_int(index_of_datum)
-
-  def write_array(self, writers_schema, datum, encoder):
-    """
-    Arrays are encoded as a series of blocks.
-
-    Each block consists of a long count value,
-    followed by that many array items.
-    A block with count zero indicates the end of the array.
-    Each item is encoded per the array's item schema.
-
-    If a block's count is negative,
-    then the count is followed immediately by a long block size,
-    indicating the number of bytes in the block.
-    The actual count in this case
-    is the absolute value of the count written.
-    """
-    if len(datum) > 0:
-      encoder.write_long(len(datum))
-      for item in datum:
-        self.write_data(writers_schema.items, item, encoder)
-    encoder.write_long(0)
-
-  def write_map(self, writers_schema, datum, encoder):
-    """
-    Maps are encoded as a series of blocks.
-
-    Each block consists of a long count value,
-    followed by that many key/value pairs.
-    A block with count zero indicates the end of the map.
-    Each item is encoded per the map's value schema.
-
-    If a block's count is negative,
-    then the count is followed immediately by a long block size,
-    indicating the number of bytes in the block.
-    The actual count in this case
-    is the absolute value of the count written.
-    """
-    if len(datum) > 0:
-      encoder.write_long(len(datum))
-      for key, val in datum.items():
-        encoder.write_utf8(key)
-        self.write_data(writers_schema.values, val, encoder)
-    encoder.write_long(0)
-
-  def write_union(self, writers_schema, datum, encoder):
-    """
-    A union is encoded by first writing a long value indicating
-    the zero-based position within the union of the schema of its value.
-    The value is then encoded per the indicated schema within the union.
-    """
-    # resolve union
-    index_of_schema = -1
-    for i, candidate_schema in enumerate(writers_schema.schemas):
-      if candidate_schema.validate(datum):
-        index_of_schema = i
-    if index_of_schema < 0: raise AvroTypeException(writers_schema, datum)
-
-    # write data
-    encoder.write_long(index_of_schema)
-    self.write_data(writers_schema.schemas[index_of_schema], datum, encoder)
-
-  def write_record(self, writers_schema, datum, encoder):
-    """
-    A record is encoded by encoding the values of its fields
-    in the order that they are declared. In other words, a record
-    is encoded as just the concatenation of the encodings of its fields.
-    Field values are encoded per their schema.
-    """
-    for field in writers_schema.fields:
-      self.write_data(field.type, datum.get(field.name), encoder)
+    # keep this method for compatibility
+    writers_schema.write_data(datum, encoder)
