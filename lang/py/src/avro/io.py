@@ -338,51 +338,6 @@ class DatumReader(object):
         return False
     return True
 
-  @staticmethod
-  def match_schemas(writers_schema, readers_schema):
-    w_type = writers_schema.type
-    r_type = readers_schema.type
-    if 'union' in [w_type, r_type] or 'error_union' in [w_type, r_type]:
-      return True
-    elif (w_type in schema.PRIMITIVE_TYPES and r_type in schema.PRIMITIVE_TYPES
-          and w_type == r_type):
-      return True
-    elif (w_type == r_type == 'record' and
-          DatumReader.check_props(writers_schema, readers_schema, 
-                                  ['fullname'])):
-      return True
-    elif (w_type == r_type == 'error' and
-          DatumReader.check_props(writers_schema, readers_schema, 
-                                  ['fullname'])):
-      return True
-    elif (w_type == r_type == 'request'):
-      return True
-    elif (w_type == r_type == 'fixed' and 
-          DatumReader.check_props(writers_schema, readers_schema, 
-                                  ['fullname', 'size'])):
-      return True
-    elif (w_type == r_type == 'enum' and 
-          DatumReader.check_props(writers_schema, readers_schema, 
-                                  ['fullname'])):
-      return True
-    elif (w_type == r_type == 'map' and 
-          DatumReader.check_props(writers_schema.values,
-                                  readers_schema.values, ['type'])):
-      return True
-    elif (w_type == r_type == 'array' and 
-          DatumReader.check_props(writers_schema.items,
-                                  readers_schema.items, ['type'])):
-      return True
-    
-    # Handle schema promotion
-    if w_type == 'int' and r_type in ['long', 'float', 'double']:
-      return True
-    elif w_type == 'long' and r_type in ['float', 'double']:
-      return True
-    elif w_type == 'float' and r_type == 'double':
-      return True
-    return False
-
   def __init__(self, writers_schema=None, readers_schema=None):
     """
     As defined in the Avro specification, we call the schema encoded
@@ -409,16 +364,8 @@ class DatumReader(object):
 
   def read_data(self, writers_schema, readers_schema, decoder):
     # schema matching
-    if not DatumReader.match_schemas(writers_schema, readers_schema):
-      fail_msg = 'Schemas do not match.'
-      raise SchemaResolutionException(fail_msg, writers_schema, readers_schema)
-
-    # schema resolution: reader's schema is a union, writer's schema is not
-    if (writers_schema.type not in ['union', 'error_union']
-        and readers_schema.type in ['union', 'error_union']):
-      for s in readers_schema.schemas:
-        if DatumReader.match_schemas(writers_schema, s):
-          return self.read_data(writers_schema, s, decoder)
+    readers_schema = writers_schema.select_reader_schema(readers_schema)
+    if readers_schema is None:
       fail_msg = 'Schemas do not match.'
       raise SchemaResolutionException(fail_msg, writers_schema, readers_schema)
 
