@@ -38,9 +38,7 @@ class ExampleProtocol(object):
 #
 # Example Protocols
 #
-
-EXAMPLES = [
-  ExampleProtocol("""\
+HELLO_WORLD = ExampleProtocol("""\
 {
   "namespace": "com.acme",
   "protocol": "HelloWorld",
@@ -60,7 +58,9 @@ EXAMPLES = [
     }
   }
 }
-    """, True),
+    """, True)
+EXAMPLES = [
+  HELLO_WORLD,
   ExampleProtocol("""\
 {"namespace": "org.apache.avro.test",
  "protocol": "Simple",
@@ -363,6 +363,16 @@ class TestProtocol(unittest.TestCase):
     fail_msg = "Parse behavior correct on %d out of %d protocols." % \
       (num_correct, len(EXAMPLES))
     self.assertEqual(num_correct, len(EXAMPLES), fail_msg)
+
+  def test_inner_namespace_set(self):
+    print ''
+    print 'TEST INNER NAMESPACE'
+    print '==================='
+    print ''
+    proto = protocol.parse(HELLO_WORLD.protocol_string)
+    self.assertEqual(proto.namespace, "com.acme")
+    greeting_type = proto.types_dict['Greeting']
+    self.assertEqual(greeting_type.namespace, 'com.acme')
 
   def test_valid_cast_to_string_after_parse(self):
     """

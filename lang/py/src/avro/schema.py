@@ -709,7 +709,7 @@ def make_avsc_object(json_data, names=None):
       return PrimitiveSchema(type)
     elif type in NAMED_TYPES:
       name = json_data.get('name')
-      namespace = json_data.get('namespace')
+      namespace = json_data.get('namespace', names.default_namespace)
       if type == 'fixed':
         size = json_data.get('size')
         return FixedSchema(name, namespace, size, names, other_props)
