@@ -108,6 +108,15 @@ class AvroException(Exception):
 class SchemaParseException(AvroException):
   pass
 
+class SchemaResolutionException(AvroException):
+  def __init__(self, fail_msg, writers_schema=None, readers_schema=None):
+    pretty_writers = json.dumps(json.loads(str(writers_schema)), indent=2)
+    pretty_readers = json.dumps(json.loads(str(readers_schema)), indent=2)
+    if writers_schema: fail_msg += "\nWriter's Schema: %s" % pretty_writers
+    if readers_schema: fail_msg += "\nReader's Schema: %s" % pretty_readers
+    AvroException.__init__(self, fail_msg)
+
+
 #
 # Base Classes
 #
@@ -176,6 +185,12 @@ class Schema(object):
     raise NotImplementedError("must be implemented by subclass %s"
                               % self.__class__)
 
+  def read_data(self, decoder, readers_schema):
+    """subclasses must implement the dispatch logic to the
+    decoder. Method should return next object that the reader
+    expects"""
+    raise NotImplementedError("must be implemented by subclass %s"
+                              % self.__class__)
 
 class Name(object):
   """Class to describe Avro name."""
@@ -449,6 +464,29 @@ class PrimitiveSchema(Schema):
       # promote float -> double
       return True
     return False
+
+  def read_data(self, decoder, readers_schema):
+    if self.type == 'null':
+      return decoder.read_null()
+    elif self.type == 'boolean':
+      return decoder.read_boolean()
+    elif self.type == 'string':
+      return decoder.read_utf8()
+    elif self.type == 'int':
+      return decoder.read_int()
+    elif self.type == 'long':
+      return decoder.read_long()
+    elif self.type == 'float':
+      return decoder.read_float()
+    elif self.type == 'double':
+      return decoder.read_double()
+    elif self.type == 'bytes':
+      return decoder.read_bytes()
+    else:
+      fail_msg = "Cannot read unknown schema type: %s" % self.type
+      raise AvroException(fail_msg)
+
+
 #
 # Complex Types (non-recursive)
 #
@@ -488,6 +526,12 @@ class FixedSchema(NamedSchema):
 
   def __eq__(self, that):
     return self.props == that.props
+
+  def read_data(self, decoder, readers_schema):
+    return decoder.read(self.size)
+
+
+
 
 class EnumSchema(NamedSchema):
   def __init__(self, name, namespace, symbols, names=None, doc=None, other_props=None):
@@ -531,6 +575,27 @@ class EnumSchema(NamedSchema):
 
   def __eq__(self, that):
     return self.props == that.props
+
+  def read_data(self, decoder, readers_schema):
+    """
+    An enum is encoded by a int, representing the zero-based position
+    of the symbol in the schema.
+    """
+    # read data
+    index_of_symbol = decoder.read_int()
+    if index_of_symbol >= len(self.symbols):
+      fail_msg = "Can't access enum index %d for enum with %d symbols"\
+                 % (index_of_symbol, len(self.symbols))
+      raise SchemaResolutionException(fail_msg, self, readers_schema)
+    read_symbol = self.symbols[index_of_symbol]
+
+    # schema resolution
+    if read_symbol not in readers_schema.symbols:
+      fail_msg = "Symbol %s not present in Reader's Schema" % read_symbol
+      raise SchemaResolutionException(fail_msg, self, readers_schema)
+
+    return read_symbol
+
 
 #
 # Complex Types (recursive)
@@ -577,6 +642,34 @@ class ArraySchema(Schema):
     to_cmp = json.loads(str(self))
     return to_cmp == json.loads(str(that))
 
+  def read_data(self, decoder, readers_schema):
+    """
+    Arrays are encoded as a series of blocks.
+
+    Each block consists of a long count value,
+    followed by that many array items.
+    A block with count zero indicates the end of the array.
+    Each item is encoded per the array's item schema.
+
+    If a block's count is negative,
+    then the count is followed immediately by a long block size,
+    indicating the number of bytes in the block.
+    The actual count in this case
+    is the absolute value of the count written.
+    """
+    read_items = []
+    block_count = decoder.read_long()
+    while block_count != 0:
+      if block_count < 0:
+        block_count = -block_count
+        block_size = decoder.read_long()
+      for i in range(block_count):
+        read_items.append(self.items.read_data(decoder,
+                                               readers_schema.items))
+      block_count = decoder.read_long()
+    return read_items
+
+
 class MapSchema(Schema):
   def __init__(self, values, names=None, other_props=None):
     # Call parent ctor
@@ -618,6 +711,36 @@ class MapSchema(Schema):
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
     return to_cmp == json.loads(str(that))
+
+  def read_data(self, decoder, readers_schema):
+    """
+    Maps are encoded as a series of blocks.
+
+    Each block consists of a long count value,
+    followed by that many key/value pairs.
+    A block with count zero indicates the end of the map.
+    Each item is encoded per the map's value schema.
+
+    If a block's count is negative,
+    then the count is followed immediately by a long block size,
+    indicating the number of bytes in the block.
+    The actual count in this case
+    is the absolute value of the count written.
+    """
+    read_items = {}
+    block_count = decoder.read_long()
+    while block_count != 0:
+      if block_count < 0:
+        block_count = -block_count
+        block_size = decoder.read_long()
+      for i in range(block_count):
+        key = decoder.read_utf8()
+        read_items[key] = self.values.read_data(decoder,
+                                                readers_schema.values)
+      block_count = decoder.read_long()
+    return read_items
+
+
 
 class UnionSchema(Schema):
   """
@@ -676,6 +799,25 @@ class UnionSchema(Schema):
   def __eq__(self, that):
     to_cmp = json.loads(str(self))
     return to_cmp == json.loads(str(that))
+
+  def read_data(self, decoder, readers_schema):
+    """
+    A union is encoded by first writing a long value indicating
+    the zero-based position within the union of the schema of its value.
+    The value is then encoded per the indicated schema within the union.
+    """
+    # schema resolution
+    index_of_schema = int(decoder.read_long())
+    if index_of_schema >= len(self.schemas):
+      fail_msg = "Can't access branch index %d for union with %d branches"\
+          % (index_of_schema, len(self.schemas))
+      raise SchemaResolutionException(fail_msg, self, readers_schema)
+    selected_writers_schema = self.schemas[index_of_schema]
+    
+    # read data
+    return selected_writers_schema.read_data(decoder, readers_schema)
+
+
 
 class ErrorUnionSchema(UnionSchema):
   def __init__(self, schemas, names=None):

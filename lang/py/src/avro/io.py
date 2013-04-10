@@ -370,30 +370,7 @@ class DatumReader(object):
       raise SchemaResolutionException(fail_msg, writers_schema, readers_schema)
 
     # function dispatch for reading data based on type of writer's schema
-    if writers_schema.type == 'null':
-      return decoder.read_null()
-    elif writers_schema.type == 'boolean':
-      return decoder.read_boolean()
-    elif writers_schema.type == 'string':
-      return decoder.read_utf8()
-    elif writers_schema.type == 'int':
-      return decoder.read_int()
-    elif writers_schema.type == 'long':
-      return decoder.read_long()
-    elif writers_schema.type == 'float':
-      return decoder.read_float()
-    elif writers_schema.type == 'double':
-      return decoder.read_double()
-    elif writers_schema.type == 'bytes':
-      return decoder.read_bytes()
-    elif writers_schema.type == 'fixed':
-      return self.read_fixed(writers_schema, readers_schema, decoder)
-    elif writers_schema.type == 'enum':
-      return self.read_enum(writers_schema, readers_schema, decoder)
-    elif writers_schema.type == 'array':
-      return self.read_array(writers_schema, readers_schema, decoder)
-    elif writers_schema.type == 'map':
-      return self.read_map(writers_schema, readers_schema, decoder)
+    writers_schema.read_data(decoder, readers_schema)
     elif writers_schema.type in ['union', 'error_union']:
       return self.read_union(writers_schema, readers_schema, decoder)
     elif writers_schema.type in ['record', 'error', 'request']:
@@ -435,13 +412,6 @@ class DatumReader(object):
       fail_msg = "Unknown schema type: %s" % writers_schema.type
       raise schema.AvroException(fail_msg)
 
-  def read_fixed(self, writers_schema, readers_schema, decoder):
-    """
-    Fixed instances are encoded using the number of bytes declared
-    in the schema.
-    """
-    return decoder.read(writers_schema.size)
-
   def skip_fixed(self, writers_schema, decoder):
     return decoder.skip(writers_schema.size)
 
@@ -468,33 +438,6 @@ class DatumReader(object):
   def skip_enum(self, writers_schema, decoder):
     return decoder.skip_int()
 
-  def read_array(self, writers_schema, readers_schema, decoder):
-    """
-    Arrays are encoded as a series of blocks.
-
-    Each block consists of a long count value,
-    followed by that many array items.
-    A block with count zero indicates the end of the array.
-    Each item is encoded per the array's item schema.
-
-    If a block's count is negative,
-    then the count is followed immediately by a long block size,
-    indicating the number of bytes in the block.
-    The actual count in this case
-    is the absolute value of the count written.
-    """
-    read_items = []
-    block_count = decoder.read_long()
-    while block_count != 0:
-      if block_count < 0:
-        block_count = -block_count
-        block_size = decoder.read_long()
-      for i in range(block_count):
-        read_items.append(self.read_data(writers_schema.items,
-                                         readers_schema.items, decoder))
-      block_count = decoder.read_long()
-    return read_items
-
   def skip_array(self, writers_schema, decoder):
     block_count = decoder.read_long()
     while block_count != 0:
@@ -506,33 +449,6 @@ class DatumReader(object):
           self.skip_data(writers_schema.items, decoder)
       block_count = decoder.read_long()
 
-  def read_map(self, writers_schema, readers_schema, decoder):
-    """
-    Maps are encoded as a series of blocks.
-
-    Each block consists of a long count value,
-    followed by that many key/value pairs.
-    A block with count zero indicates the end of the map.
-    Each item is encoded per the map's value schema.
-
-    If a block's count is negative,
-    then the count is followed immediately by a long block size,
-    indicating the number of bytes in the block.
-    The actual count in this case
-    is the absolute value of the count written.
-    """
-    read_items = {}
-    block_count = decoder.read_long()
-    while block_count != 0:
-      if block_count < 0:
-        block_count = -block_count
-        block_size = decoder.read_long()
-      for i in range(block_count):
-        key = decoder.read_utf8()
-        read_items[key] = self.read_data(writers_schema.values,
-                                         readers_schema.values, decoder)
-      block_count = decoder.read_long()
-    return read_items
 
   def skip_map(self, writers_schema, decoder):
     block_count = decoder.read_long()
@@ -545,23 +461,6 @@ class DatumReader(object):
           decoder.skip_utf8()
           self.skip_data(writers_schema.values, decoder)
       block_count = decoder.read_long()
-
-  def read_union(self, writers_schema, readers_schema, decoder):
-    """
-    A union is encoded by first writing a long value indicating
-    the zero-based position within the union of the schema of its value.
-    The value is then encoded per the indicated schema within the union.
-    """
-    # schema resolution
-    index_of_schema = int(decoder.read_long())
-    if index_of_schema >= len(writers_schema.schemas):
-      fail_msg = "Can't access branch index %d for union with %d branches"\
-                 % (index_of_schema, len(writers_schema.schemas))
-      raise SchemaResolutionException(fail_msg, writers_schema, readers_schema)
-    selected_writers_schema = writers_schema.schemas[index_of_schema]
-    
-    # read data
-    return self.read_data(selected_writers_schema, readers_schema, decoder)
 
   def skip_union(self, writers_schema, decoder):
     index_of_schema = int(decoder.read_long())
