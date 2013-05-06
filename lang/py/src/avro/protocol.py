@@ -148,7 +148,7 @@ class Message(object):
     if not isinstance(request, list):
       fail_msg = 'Request property not a list: %s' % request
       raise ProtocolParseException(fail_msg)
-    return schema.RecordSchema(None, None, request, names, 'request')
+    return schema.RecordSchema(self.name, None, request, names, 'request')
   
   def _parse_response(self, response, names):
     if isinstance(response, basestring) and names.has_name(response, None):
