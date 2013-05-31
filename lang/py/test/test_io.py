@@ -22,6 +22,24 @@ from binascii import hexlify
 from avro import schema
 from avro import io
 
+DATA_TO_INVALIDATE = (
+  ("""\
+   {"type": "record",
+    "name": "Test",
+    "fields": [{"name": "f", "type": "long"}]}
+   """, {'f': 5, 'extra_field': "abc"}, "extra field"),
+  ("""\
+   {"type": "record",
+    "name": "Test",
+    "fields": [{"name": "f", "type": "long", "default": 0}]}
+   """, {}, "missing field with default"),
+  ("""\
+   {"type": "record",
+    "name": "Test",
+    "fields": [{"name": "f", "type": "long"}]}
+   """, {}, "missing field without default"),
+  )
+
 SCHEMAS_TO_VALIDATE = (
   ('"null"', None),
   ('"boolean"', True),
@@ -172,6 +190,18 @@ class TestIO(unittest.TestCase):
   #
   # BASIC FUNCTIONALITY
   #
+
+  def test_invalid(self):
+    print_test_name('TEST INVALID DATA')
+    passed = 0
+    for example_schema, bad_datum, reason in DATA_TO_INVALIDATE:
+      is_valid = io.validate(schema.parse(example_schema), bad_datum)
+      if not is_valid:
+        passed += 1
+        print "correctly invalid: %s" % reason
+      else:
+        print "incorrectly validated '%s' data" % reason
+    self.assertEquals(passed, len(DATA_TO_INVALIDATE))
 
   def test_validate(self):
     print_test_name('TEST VALIDATE')
