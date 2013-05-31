@@ -133,9 +133,19 @@ def validate(expected_schema, datum):
   elif schema_type in ['union', 'error_union']:
     return True in [validate(s, datum) for s in expected_schema.schemas]
   elif schema_type in ['record', 'error', 'request']:
-    return (isinstance(datum, dict) and
-      False not in
-        [validate(f.type, datum.get(f.name)) for f in expected_schema.fields])
+    # check it's a dictionary      
+    if not isinstance(datum, dict):
+       return False
+
+    # check that key list is same as expected
+    if set(datum.keys()) != set([f.name for f in expected_schema.fields]):
+       return False
+
+    # validate each member
+    for f in expected_schema.fields:
+      if not validate(f.type, datum.get(f.name)):
+         return False
+    return True
 
 #
 # Decoder/Encoder
